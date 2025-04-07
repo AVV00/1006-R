@@ -1,0 +1,98 @@
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+# 1. 读取所有样本路径
+all_samples <- list.files("allsalmon", pattern = "quant.sf$", full.names = TRUE, recursive = TRUE)
+
+# 2. 提取样本名称
+sample_names <- basename(dirname(all_samples))  # 提取文件夹名，而不是 quant.sf
+
+# 3. 从文件夹名中提取部位, 肥胖数据, 编号
+sample_info <- data.frame(
+  Tissue = sub("^(.*?)_.*", "\\1", sample_names),  # 提取部位名
+  Condition = ifelse(grepl("SHAMChow", sample_names), "SHAMChow", 
+                     ifelse(grepl("Sham", sample_names), "Sham", 
+                            ifelse(grepl("RYGB", sample_names), "RYGB", "SHAMWM"))),  # 提取组别
+  ID = sub(".*qc_(\\d+)$", "\\1", sample_names),  # 提取编号
+  stringsAsFactors = FALSE
+)
+
+# 4. 创建样本信息表
+sample_table <- data.frame(
+  sample = sample_names,
+  Tissue = sample_info$Tissue,
+  Condition = sample_info$Condition,
+  files = all_samples
+)
+
+# 检查样本表是否正确
+print(sample_table)
+print(dim(sample_table))
+
+# 5. 确保 `Condition` 是因子，并设定所有组别的顺序
+sample_table$Condition <- factor(sample_table$Condition, levels = c("Sham", "SHAMChow", "RYGB", "SHAMWM"))
+
+
+# 6. 导入数据并创建 DESeq2 数据集
+txi <- tximport(sample_table$files, type = "salmon", txOut = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = sample_table, design = ~Condition)
+
+# 7. 检查 DESeq2 数据集是否创建成功
+print(dds)
+colData(dds)
+
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+
+# 创建分组信息表
+annotation_col <- data.frame(
+  Condition = filtered_samples$Condition,
+  Tissue = filtered_samples$Tissue
+)
+
+# 确保样本名唯一
+sample_names <- paste(filtered_samples$Tissue, filtered_samples$Condition, filtered_samples$ID, sep="-")
+unique_sample_names <- make.unique(sample_names)
+rownames(annotation_col) <- unique_sample_names
+
+# 为分组信息设置颜色
+ann_colors <- list(
+  Condition = c(Sham = "lightblue", SHAMChow = "pink"),
+  Tissue = c(Colon = "#1b9e77", DistJej = "#d95f02", Duodenum = "#7570b3", Ileum = "#e7298a", ProxJej = "#66a61e")
+)
+
+# 设置颜色方案
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+# 计算样品间的距离矩阵 (vsd 必须存在)
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+# 将样本排序：先 `Sham`，后 `SHAMChow`
+sorted_index <- order(filtered_samples$Condition)
+sampleDistMatrix <- sampleDistMatrix[sorted_index, sorted_index]
+annotation_col <- annotation_col[sorted_index, ]
+
+# 绘制热图
+pheatmap(sampleDistMatrix,
+         annotation_col = annotation_col,
+         annotation_colors = ann_colors,
+         clustering_distance_rows = "euclidean",  # 使用欧几里得距离
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",  # 使用完整聚类方法
+         col = colors,
+         show_colnames = FALSE,
+         show_rownames = FALSE,
+         fontsize = 10,
+         width = 12,
+         height = 10)
+
+
+```
