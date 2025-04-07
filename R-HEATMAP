@@ -1,4 +1,14 @@
 ```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install(c("DESeq2", "tximport"))
+install.packages(c("ggplot2", "pheatmap"))
+install.packages("RColorBrewer")
+
+```
+
+```{r}
 library(DESeq2)
 library(tximport)
 library(ggplot2)
