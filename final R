@@ -1,1 +1,3708 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-04-07"
+---
 
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+# 1. 读取所有样本路径
+all_samples <- list.files("allsalmon", pattern = "quant.sf$", full.names = TRUE, recursive = TRUE)
+
+# 2. 提取样本名称
+sample_names <- basename(dirname(all_samples))  # 提取文件夹名，而不是 quant.sf
+
+# 3. 从文件夹名中提取部位, 肥胖数据, 编号
+sample_info <- data.frame(
+  Tissue = sub("^(.*?)_.*", "\\1", sample_names),  # 提取部位名
+  Condition = ifelse(grepl("SHAMChow", sample_names), "SHAMChow", 
+                     ifelse(grepl("Sham", sample_names), "Sham", 
+                            ifelse(grepl("RYGB", sample_names), "RYGB", "SHAMWM"))),  # 提取组别
+  ID = sub(".*qc_(\\d+)$", "\\1", sample_names),  # 提取编号
+  stringsAsFactors = FALSE
+)
+
+# 4. 创建样本信息表
+sample_table <- data.frame(
+  sample = sample_names,
+  Tissue = sample_info$Tissue,
+  Condition = sample_info$Condition,
+  files = all_samples
+)
+
+# 检查样本表是否正确
+print(sample_table)
+print(dim(sample_table))
+
+# 5. 确保 `Condition` 是因子，并设定所有组别的顺序
+sample_table$Condition <- factor(sample_table$Condition, levels = c("Sham", "SHAMChow", "RYGB", "SHAMWM"))
+
+
+# 6. 导入数据并创建 DESeq2 数据集
+txi <- tximport(sample_table$files, type = "salmon", txOut = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = sample_table, design = ~Condition)
+
+# 7. 检查 DESeq2 数据集是否创建成功
+print(dds)
+colData(dds)
+```
+
+```{r}
+View(sample_table)
+
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+
+# 0. 只保留 Sham 和 SHAMChow 的样本
+filtered_index <- sample_table$Condition %in% c("Sham", "SHAMChow")
+filtered_samples <- sample_table[filtered_index, ]
+
+# 1. 构建注释信息
+annotation_col <- data.frame(
+  Condition = filtered_samples$Condition,
+  Tissue = filtered_samples$Tissue
+)
+rownames(annotation_col) <- filtered_samples$sample
+
+# 2. 定义颜色（只包含 Sham 和 SHAMChow）
+ann_colors <- list(
+  Condition = c(
+    Sham = "lightblue",
+    SHAMChow = "pink"
+  ),
+  Tissue = c(
+    Colon = "#1b9e77",
+    DistJej = "#d95f02",
+    Duodenum = "#7570b3",
+    Ileum = "#e7298a",
+    ProxJej = "#66a61e",
+    Common = "#e6ab02",
+    Biliopancr = "#a6761d"
+  )
+)
+
+# 3. 样本排序（Sham 在前）
+sorted_index <- order(factor(filtered_samples$Condition, levels = c("Sham", "SHAMChow")))
+
+# 4. 设置行列名
+rownames(sampleDistMatrix) <- sample_table$sample
+colnames(sampleDistMatrix) <- sample_table$sample
+
+# 5. 提取对应子矩阵
+sampleDistMatrix_filtered <- sampleDistMatrix[filtered_samples$sample, filtered_samples$sample]
+sampleDistMatrix_filtered <- sampleDistMatrix_filtered[sorted_index, sorted_index]
+annotation_col <- annotation_col[sorted_index, ]
+
+# 6. 定义颜色映射（如未定义）
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(100)
+
+# 7. 绘图
+pheatmap(sampleDistMatrix_filtered,
+         annotation_col = annotation_col,
+         annotation_colors = ann_colors,
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         col = colors,
+         show_colnames = FALSE,
+         show_rownames = FALSE,
+         fontsize = 10,
+         width = 12,
+         height = 10)
+
+```
+
+
+
+```{r}
+print(dds)
+colData(dds)
+print(sample_table)
+```
+
+
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(RColorBrewer)
+
+# 假设你的样本信息表为 `sample_table`
+# sample_table 包含以下列：
+# - sample: 样本名称
+# - Tissue: 组织类型 (共7种)
+# - Condition: 条件 (共4种)
+# - files: quant.sf 文件路径
+
+# 确保 Condition 和 Tissue 是因子，并且设定好因子顺序
+sample_table$Condition <- factor(sample_table$Condition, levels = c("Sham", "SHAMChow", "RYGB", "SHAMWM"))
+sample_table$Tissue <- factor(sample_table$Tissue, levels = c("Alim","Biliopancr", "Colon", "Common", "DistJej", "Duodenum", "Ileum", "ProxJej"))
+
+# 2. 导入数据并创建 DESeq2 对象
+txi <- tximport(sample_table$files, type = "salmon", txOut = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = sample_table, design = ~ Tissue + Condition)
+
+# 3. 对数据进行 VST 转换 (标准化)
+vsd <- vst(dds, blind = TRUE)
+
+# 4. 提取 PCA 数据
+pcaData <- plotPCA(vsd, intgroup = c("Tissue", "Condition"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+# 5. 自定义颜色：按色系分组
+custom_colors <- c(
+  "Alim" = "#E41A1C",       # 红
+  "ProxJej" = "#FF6666",    # 浅红（同组）
+  "Biliopancr" = "#377EB8", # 深蓝
+  "Duodenum" = "#9ecae1",   # 浅蓝（同组）
+  "Common" = "#FFD700",     # 金黄
+  "DistJej" = "#FFA500",    # 橙黄（同组）
+  "Ileum" = "#984EA3",      # 紫
+  "Colon" = "#4DAF4A"       # 绿
+)
+
+# 6. 绘制 PCA 图
+ggplot(pcaData, aes(PC1, PC2, color = Tissue, shape = Condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = custom_colors) +
+  ggtitle("PCA Plot of All Samples by Tissue and Condition")
+
+```
+
+```{r}
+# 检查是否存在 NA 值
+summary(sample_table)
+
+# 检查 Tissue 列中是否存在 NA 值
+any(is.na(sample_table$Tissue))  # 如果输出是 TRUE，则说明存在 NA
+
+# 显示含有 NA 的行
+sample_table[is.na(sample_table$Tissue), ]
+
+# 移除包含 NA 的行 (如果想保留完整数据可以修复 NA 而不是移除)
+sample_table <- na.omit(sample_table)
+
+```
+```{r}
+print(dds)
+colData(dds)
+print(sample_table)
+View(sample_table)
+```
+```{r}
+# 加载包
+install.packages("BiocManager", repos="https://cloud.r-project.org")
+BiocManager::install(c("DESeq2", "tximport", "ggplot2", "pheatmap", "IHW", "ashr"))
+```
+
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(pheatmap)
+library(IHW)
+library(ashr)
+
+
+
+# Step 1: 筛选 Sham 和 SHAMChow 样本（所有组织）
+filtered_samples <- subset(sample_table, Condition %in% c("Sham", "SHAMChow"))
+
+# Step 2: 设置条件为因子，Sham 为对照组
+filtered_samples$Condition <- factor(filtered_samples$Condition, levels = c("Sham", "SHAMChow"))
+
+# Step 3: Tissue 也转为因子（如果还不是）
+filtered_samples$Tissue <- factor(filtered_samples$Tissue)
+
+# Step 4: 导入表达矩阵
+txi <- tximport(filtered_samples$files, type = "salmon", txOut = TRUE)
+
+# Step 5: 构建 DESeq2 数据集，使用组织作为协变量
+dds <- DESeqDataSetFromTximport(txi,
+                                colData = filtered_samples,
+                                design = ~Tissue + Condition)
+
+# Step 6: 运行 DESeq2 主流程
+dds <- DESeq(dds)
+
+# Step 7: 提取 SHAMChow vs Sham 的结果（校正组织效应）
+res <- results(dds, name = "Condition_SHAMChow_vs_Sham")
+
+# Step 8: 使用 lfcShrink 获取更稳健的 log2FC
+resLFC <- lfcShrink(dds, coef = "Condition_SHAMChow_vs_Sham", type = "ashr")
+
+# Step 9: 可选 - 使用 IHW 做 FDR 调整
+resIHW <- results(dds, filterFun = ihw)
+summary(resIHW)
+
+# Step 10: 输出结果
+resOrdered <- res[order(res$pvalue), ]
+head(resOrdered)
+
+# Step 11: 可视化差异表达
+plotMA(resLFC, ylim = c(-2, 2))
+
+```
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(pheatmap)
+library(IHW)
+library(ashr)
+colon_table <- subset(sample_table, Tissue == "Colon" & Condition %in% c("Sham", "SHAMChow"))
+colon_table$Condition <- droplevels(colon_table$Condition)
+txi_colon <- tximport(colon_table$files, type = "salmon", txOut = TRUE)
+dds_colon <- DESeqDataSetFromTximport(txi_colon, colData = colon_table, design = ~Condition)
+dds_colon <- DESeq(dds_colon)
+res_colon <- results(dds_colon, contrast = c("Condition", "SHAMChow", "Sham"))
+resLFC_colon <- lfcShrink(dds_colon, coef="Condition_SHAMChow_vs_Sham", type="ashr")
+resIHW <- results(dds_colon, filterFun = ihw)
+summary(resIHW)
+plotMA(resLFC_colon, ylim=c(-2,2))
+title("Colon")
+```
+```{r}
+distjej_table <- subset(sample_table, Tissue == "DistJej" & Condition %in% c("Sham", "SHAMChow"))
+distjej_table$Condition <- droplevels(distjej_table$Condition)
+txi_distjej <- tximport(distjej_table$files, type = "salmon", txOut = TRUE)
+dds_distjej <- DESeqDataSetFromTximport(txi_distjej, colData = distjej_table, design = ~Condition)
+dds_distjej <- DESeq(dds_distjej)
+res_distjej <- results(dds_distjej, contrast = c("Condition", "SHAMChow", "Sham"))
+resLFC_distjej <- lfcShrink(dds_distjej, coef="Condition_SHAMChow_vs_Sham", type="ashr")
+resIHW <- results(dds_distjej, filterFun = ihw)
+summary(resIHW)
+plotMA(resLFC_distjej, ylim=c(-2,2))
+title("distjej")
+```
+```{r}
+duodenum_table <- subset(sample_table, Tissue == "Duodenum" & Condition %in% c("Sham", "SHAMChow"))
+duodenum_table$Condition <- droplevels(duodenum_table$Condition)
+txi_duodenum <- tximport(duodenum_table$files, type = "salmon", txOut = TRUE)
+dds_duodenum <- DESeqDataSetFromTximport(txi_duodenum, colData = duodenum_table, design = ~Condition)
+dds_duodenum <- DESeq(dds_duodenum)
+res_duodenum <- results(dds_duodenum, contrast = c("Condition", "SHAMChow", "Sham"))
+resLFC_duodenum <- lfcShrink(dds_duodenum, coef="Condition_SHAMChow_vs_Sham", type="ashr")
+resIHW <- results(dds_duodenum, filterFun = ihw)
+summary(resIHW)
+plotMA(resLFC_duodenum, ylim=c(-2,2))
+title("Duodenum")
+```
+```{r}
+ileum_table <- subset(sample_table, Tissue == "Ileum" & Condition %in% c("Sham", "SHAMChow"))
+ileum_table$Condition <- droplevels(ileum_table$Condition)
+txi_ileum <- tximport(ileum_table$files, type = "salmon", txOut = TRUE)
+dds_ileum <- DESeqDataSetFromTximport(txi_ileum, colData = ileum_table, design = ~Condition)
+dds_ileum <- DESeq(dds_ileum)
+res_ileum <- results(dds_ileum, contrast = c("Condition", "SHAMChow", "Sham"))
+resLFC_ileum <- lfcShrink(dds_ileum, coef="Condition_SHAMChow_vs_Sham", type="ashr")
+resIHW <- results(dds_ileum, filterFun = ihw)
+summary(resIHW)
+plotMA(resLFC_ileum, ylim=c(-2,2))
+title("Ileum")
+```
+```{r}
+proxjej_table <- subset(sample_table, Tissue == "ProxJej" & Condition %in% c("Sham", "SHAMChow"))
+proxjej_table$Condition <- droplevels(proxjej_table$Condition)
+txi_proxjej <- tximport(proxjej_table$files, type = "salmon", txOut = TRUE)
+dds_proxjej <- DESeqDataSetFromTximport(txi_proxjej, colData = proxjej_table, design = ~Condition)
+dds_proxjej <- DESeq(dds_proxjej)
+res_proxjej <- results(dds_proxjej, contrast = c("Condition", "SHAMChow", "Sham"))
+resLFC_proxjej <- lfcShrink(dds_proxjej, coef="Condition_SHAMChow_vs_Sham", type="ashr")
+resIHW <- results(dds_proxjej, filterFun = ihw)
+summary(resIHW)
+plotMA(resLFC_proxjej, ylim=c(-2,2))
+title("ProxJej")
+```
+```{r}
+BiocManager::install("org.Rn.eg.db")
+```
+```{r}
+head(rownames(res_colon))
+
+```
+
+```{r}
+# 加载注释包
+library("AnnotationDbi")
+library("org.Rn.eg.db")
+
+# 去掉版本号：删除 . 后的所有字符
+ens.trans <- gsub("\\..*", "", rownames(resLFC_colon))
+
+# 添加基因符号（SYMBOL）
+resLFC_colon$symbol <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "SYMBOL",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 添加 Entrez ID
+resLFC_colon$entrez <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "ENTREZID",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 根据 p 值排序（可选，但建议）
+resOrdered <- resLFC_colon[order(resLFC_colon$pvalue), ]
+
+# 转换为 data.frame 格式
+resOrderedDF <- as.data.frame(resOrdered)
+
+# 写出全部结果为 CSV 文件
+write.csv(resOrderedDF, file = "Colon_DE_results_all_annotated.csv")
+
+```
+```{r}
+# 去掉版本号：删除 . 后的所有字符
+ens.trans <- gsub("\\..*", "", rownames(resLFC_distjej))
+
+# 添加基因符号（SYMBOL）
+resLFC_distjej$symbol <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "SYMBOL",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 添加 Entrez ID
+resLFC_distjej$entrez <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "ENTREZID",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 根据 p 值排序（可选，但建议）
+resOrdered <- resLFC_distjej[order(resLFC_distjej$pvalue), ]
+
+# 转换为 data.frame 格式
+resOrderedDF <- as.data.frame(resOrdered)
+
+# 写出全部结果为 CSV 文件
+write.csv(resOrderedDF, file = "distjej_DE_results_all_annotated.csv")
+
+```
+```{r}
+# 去掉版本号：删除 . 后的所有字符
+ens.trans <- gsub("\\..*", "", rownames(resLFC_duodenum))
+
+# 添加基因符号（SYMBOL）
+resLFC_duodenum$symbol <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "SYMBOL",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 添加 Entrez ID
+resLFC_duodenum$entrez <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "ENTREZID",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 根据 p 值排序（可选，但建议）
+resOrdered <- resLFC_duodenum[order(resLFC_duodenum$pvalue), ]
+
+# 转换为 data.frame 格式
+resOrderedDF <- as.data.frame(resOrdered)
+
+# 写出全部结果为 CSV 文件
+write.csv(resOrderedDF, file = "duodenum_DE_results_all_annotated.csv")
+```
+```{r}
+ens.trans <- gsub("\\..*", "", rownames(resLFC_ileum))
+
+# 添加基因符号（SYMBOL）
+resLFC_ileum$symbol <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "SYMBOL",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 添加 Entrez ID
+resLFC_ileum$entrez <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "ENTREZID",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 根据 p 值排序（可选，但建议）
+resOrdered <- resLFC_ileum[order(resLFC_ileum$pvalue), ]
+
+# 转换为 data.frame 格式
+resOrderedDF <- as.data.frame(resOrdered)
+
+# 写出全部结果为 CSV 文件
+write.csv(resOrderedDF, file = "ileum_DE_results_all_annotated.csv")
+```
+```{r}
+ens.trans <- gsub("\\..*", "", rownames(resLFC_proxjej))
+
+# 添加基因符号（SYMBOL）
+resLFC_proxjej$symbol <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "SYMBOL",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 添加 Entrez ID
+resLFC_proxjej$entrez <- mapIds(org.Rn.eg.db,
+                              keys = ens.trans,
+                              column = "ENTREZID",
+                              keytype = "ENSEMBLTRANS",
+                              multiVals = "first")
+
+# 根据 p 值排序（可选，但建议）
+resOrdered <- resLFC_proxjej[order(resLFC_proxjej$pvalue), ]
+
+# 转换为 data.frame 格式
+resOrderedDF <- as.data.frame(resOrdered)
+
+# 写出全部结果为 CSV 文件
+write.csv(resOrderedDF, file = "proxjej_DE_results_all_annotated.csv")
+```
+```{r}
+# 读取原始注释好的差异表达结果
+colon_res <- read.csv("Colon_DE_results_all_annotated.csv", row.names = 1)
+
+# 筛选 padj < 0.1 的行
+colon_sig <- subset(colon_res, padj < 0.1)
+
+# 保存为新的文件
+write.csv(colon_sig, file = "Colon_DE_results_padj_lt_0.1.csv")
+
+```
+
+```{r}
+duodenum_res <- read.csv("duodenum_DE_results_all_annotated.csv", row.names = 1)
+duodenum_sig <- subset(duodenum_res, padj < 0.1)
+write.csv(duodenum_sig, file = "duodenum_DE_results_padj_lt_0.1.csv")
+distjej_res <- read.csv("distjej_DE_results_all_annotated.csv", row.names = 1)
+distjej_sig <- subset(distjej_res, padj < 0.1)
+write.csv(distjej_sig, file = "distjej_DE_results_padj_lt_0.1.csv")
+ileum_res <- read.csv("ileum_DE_results_all_annotated.csv", row.names = 1)
+ileum_sig <- subset(ileum_res, padj < 0.1)
+write.csv(ileum_sig, file = "ileum_DE_results_padj_lt_0.1.csv")
+proxjej_res <- read.csv("proxjej_DE_results_all_annotated.csv", row.names = 1)
+proxjej_sig <- subset(proxjej_res, padj < 0.1)
+write.csv(proxjej_sig, file = "proxjej_DE_results_padj_lt_0.1.csv")
+```
+
+```{r}
+install.packages("VennDiagram")
+```
+```{r}
+library(VennDiagram)
+
+# 设置基因集（你已经读取的数据）
+sets <- list(
+  Colon = na.omit(as.character(colon$symbol)),
+  Duodenum = na.omit(as.character(duodenum$symbol)),
+  Jejunum = na.omit(as.character(distjej$symbol)),
+  Ileum = na.omit(as.character(ileum$symbol)),
+  ProxJej = na.omit(as.character(proxjej$symbol))
+)
+
+# 绘制改进版 Venn 图
+venn.diagram(
+  x = sets,
+  filename = "venn_genes_improved.png",   # 输出图片名
+  imagetype = "png",
+  output = TRUE,
+  height = 3000,
+  width = 3000,
+  resolution = 500,
+  fill = c("#E41A1C", "#377EB8", "#4DAF4A", "#FFCE30", "#984EA3"),  # 更协调颜色
+  alpha = 0.6,                       # 半透明
+  cex = 1.5,                         # 中心数字字体大小
+  fontface = "bold",
+  fontfamily = "sans",
+  cat.cex = 1.4,                     # 类别文字大小
+  cat.fontface = "bold",
+  cat.default.pos = "outer",        # 让类别名在圈外显示
+  cat.dist = c(0.22, 0.22, 0.22, 0.22, 0.22),  # 类别名与图的距离
+  cat.pos = c(-30, 30, 0, 60, 120),  # 类别名角度，调整避免重叠
+  margin = 0.1
+)
+
+
+```
+```{r}
+install.packages("ggVennDiagram")
+```
+
+```{r}
+
+library(ggVennDiagram)
+
+# 读取 padj < 0.1 的筛选结果
+colon <- read.csv("Colon_DE_results_padj_lt_0.1.csv")
+duodenum <- read.csv("duodenum_DE_results_padj_lt_0.1.csv")
+distjej <- read.csv("distjej_DE_results_padj_lt_0.1.csv")
+ileum <- read.csv("ileum_DE_results_padj_lt_0.1.csv")
+proxjej <- read.csv("proxjej_DE_results_padj_lt_0.1.csv")
+
+# 构建基因集
+gene_sets <- list(
+  Colon = na.omit(as.character(colon$symbol)),
+  Duodenum = na.omit(as.character(duodenum$symbol)),
+  Jejunum = na.omit(as.character(distjej$symbol)),
+  Ileum = na.omit(as.character(ileum$symbol)),
+  ProxJej = na.omit(as.character(proxjej$symbol))
+)
+
+# 绘制 Venn 图（浅灰 ➝ 浅蓝，显示数字，不显示百分比）
+library(ggplot2)
+p <- ggVennDiagram(gene_sets, label = "count", label_alpha = 0) +
+  scale_fill_gradient(low = "#F5F5F5", high = "#99CCFF") +
+  theme(legend.position = "none") +
+  theme(text = element_text(size = 14))
+
+# 显示图
+print(p)
+
+# 保存图像
+ggsave("VennDiagram_ggVennDiagram.png", plot = p, width = 6, height = 6, dpi = 300)
+
+
+```
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# 安装小鼠注释数据库
+BiocManager::install("org.Mm.eg.db")
+
+```
+
+```{r}
+# 第一步：如果没安装 BiocManager 就先安装它
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# 第二步：通过 Bioconductor 安装 EnhancedVolcano 包
+BiocManager::install("EnhancedVolcano")
+
+```
+
+
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+
+# 要处理的组织名称
+tissues <- c("Colon", "duodenum", "distjej", "ileum", "proxjej")
+
+for (tissue in tissues) {
+
+  input_file <- paste0(tissue, "_DE_results_all_annotated.csv")
+  output_file <- paste0(tissue, "_volcano_pvalue.png")
+  plot_title <- paste0(tissue, ": SHAMChow vs Sham ")
+
+  res <- read.csv(input_file, row.names = 1)
+  
+  # 去除没有 symbol 的行
+  res <- res %>% filter(!is.na(symbol))
+  
+  # 检查关键列
+  if (!"symbol" %in% colnames(res) || all(is.na(res$symbol))) {
+    warning(paste("Skipping", tissue, "- no valid gene symbols"))
+    next
+  }
+  if (!"pvalue" %in% colnames(res)) {
+    warning(paste("Skipping", tissue, "- no pvalue column found"))
+    next
+  }
+
+  # 设置分组
+  res$group <- "NotSig"
+  res$group[res$log2FoldChange > 1 & res$pvalue < 0.05] <- "Up"
+  res$group[res$log2FoldChange < -1 & res$pvalue < 0.05] <- "Down"
+  res$group <- factor(res$group, levels = c("Down", "NotSig", "Up"))
+
+  # 只取在 -5 到 5 范围内的 Up/Down 基因作为候选标注
+  res_in_range <- res %>%
+    filter(log2FoldChange > -5 & log2FoldChange < 5)
+
+  top_up <- res_in_range %>%
+    filter(group == "Up") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  top_down <- res_in_range %>%
+    filter(group == "Down") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  label_data <- bind_rows(top_up, top_down) %>% filter(!is.na(symbol))
+
+  # 自定义颜色
+  color_map <- c("Up" = "firebrick", "Down" = "dodgerblue", "NotSig" = "gray70")
+
+  # 绘图
+  p <- ggplot(res, aes(x = log2FoldChange, y = -log10(pvalue), color = group)) +
+    geom_point(alpha = 0.8, size = 3.5) +
+    scale_color_manual(values = color_map) +
+    geom_vline(xintercept = c(-1, 1), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_hline(yintercept = -log10(0.05), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_text_repel(data = label_data,
+                    aes(label = symbol),
+                    size = 5.5, box.padding = 0.5, max.overlaps = 20,
+                    color = "black") +  # 黑色字体
+    labs(title = plot_title,
+         x = expression(Log[2]~"Fold Change"),
+         y = expression(-Log[10]~"P-value"),
+         color = "Group") +
+    xlim(-5, 5) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 16),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      legend.title = element_text(size = 15),
+      legend.text = element_text(size = 14),
+      plot.title = element_text(size = 17, face = "bold", hjust = 0.5),
+      axis.line = element_line(color = "black", linewidth = 0.6)  # ✅ 添加的部分
+    )
+
+  # 保存图像
+  ggsave(output_file, plot = p, width = 6.5, height = 9, dpi = 300)
+  message("✅ Volcano plot saved for: ", tissue, 
+          " | labeled Up: ", nrow(top_up), 
+          " | Down: ", nrow(top_down))
+  print(p)
+}
+
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(grid)  # 用于 unit()
+
+# 要处理的组织名称
+tissues <- c("Colon", "duodenum", "distjej", "ileum", "proxjej")
+
+for (tissue in tissues) {
+  input_file <- paste0(tissue, "_DE_results_all_annotated.csv")
+  output_file <- paste0(tissue, "_volcano_pvalue.png")
+  plot_title <- paste0(tissue, ": SHAMChow vs Sham (Top 20 + Highlighted Genes)")
+
+  # 读取数据
+  res <- read.csv(input_file, row.names = 1)
+
+  # 去除没有 symbol 的行
+  res <- res %>% filter(!is.na(symbol))
+
+  # 如果缺失 pvalue 列，跳过
+  if (!"pvalue" %in% colnames(res)) {
+    warning(paste("Skipping", tissue, "- no pvalue column found"))
+    next
+  }
+
+  # 设置分组
+  res$group <- "NotSig"
+  res$group[res$log2FoldChange > 1 & res$pvalue < 0.05] <- "Up"
+  res$group[res$log2FoldChange < -1 & res$pvalue < 0.05] <- "Down"
+  res$group <- factor(res$group, levels = c("Down", "NotSig", "Up"))
+
+  # 限定 log2FC 范围用于筛选
+  res_in_range <- res %>%
+    filter(log2FoldChange > -5 & log2FoldChange < 5)
+
+  # 分别筛选前 10 个 Up 和 Down 基因
+  top_up <- res_in_range %>%
+    filter(group == "Up") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  top_down <- res_in_range %>%
+    filter(group == "Down") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  label_data <- bind_rows(top_up, top_down)
+
+  # 把这20个基因的信息保存为 dataframe，命名为 tissue_dataframe
+  assign(paste0(tissue, "_dataframe"), label_data[, c("symbol", "pvalue")])
+
+  # 自定义颜色
+  color_map <- c("Up" = "firebrick", "Down" = "dodgerblue", "NotSig" = "gray70")
+
+  # 作图
+  p <- ggplot(res, aes(x = log2FoldChange, y = -log10(pvalue), color = group)) +
+    geom_point(alpha = 0.8, size = 3.5) +
+    scale_color_manual(values = color_map) +
+    geom_vline(xintercept = c(-1, 1), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_hline(yintercept = -log10(0.05), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_label_repel(data = label_data,
+                     aes(label = symbol),
+                     size = 5.5,
+                     box.padding = 0.5,
+                     max.overlaps = Inf,
+                     force = 5,
+                     force_pull = 1,
+                     fill = "white",
+                     color = "black",
+                     label.size = 0.5,
+                     label.r = unit(0.15, "lines"),
+                     segment.color = "black",
+                     segment.size = 0.7) +
+    labs(title = plot_title,
+         x = expression(Log[2]~"Fold Change"),
+         y = expression(-Log[10]~"P-value"),
+         color = "Group") +
+    xlim(-5, 5) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 16),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      legend.title = element_text(size = 15),
+      legend.text = element_text(size = 14),
+      plot.title = element_text(size = 17, face = "bold", hjust = 0.5),
+      axis.line = element_line(color = "black", linewidth = 0.6)  # ✅ 加这一行
+    )
+
+  # 保存图像
+  ggsave(output_file, plot = p, width = 6.5, height = 9, dpi = 300)
+  message("✅ Volcano plot saved for: ", tissue, 
+          " | labeled Up: ", nrow(top_up), 
+          " | Down: ", nrow(top_down))
+  print(p)
+}
+
+```
+
+
+```{r}
+Colon_df
+duodenum_df
+distjej_df
+ileum_df
+proxjej_df
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(RColorBrewer)
+
+# 筛选 Sham 和 RYGB 样本
+sample_table <- subset(sample_table, Condition %in% c("Sham", "RYGB"))
+sample_table$Condition <- factor(sample_table$Condition, levels = c("Sham", "RYGB"))
+sample_table$Tissue <- factor(sample_table$Tissue, levels = c("Alim","Biliopancr", "Colon", "Common", "DistJej", "Duodenum", "Ileum", "ProxJej"))
+
+# 导入数据并创建 DESeq2 对象
+txi <- tximport(sample_table$files, type = "salmon", txOut = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = sample_table, design = ~ Tissue + Condition)
+
+# VST 转换
+vsd <- vst(dds, blind = TRUE)
+
+# 提取 PCA 数据
+pcaData <- plotPCA(vsd, intgroup = c("Tissue", "Condition"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+# 自定义颜色
+custom_colors <- c(
+  "Alim" = "#E41A1C",
+  "ProxJej" = "#FF6666",
+  "Biliopancr" = "#377EB8",
+  "Duodenum" = "#9ecae1",
+  "Common" = "#FFD700",
+  "DistJej" = "#FFA500",
+  "Ileum" = "#984EA3",
+  "Colon" = "#4DAF4A"
+)
+
+# 绘制 PCA 图
+ggplot(pcaData, aes(PC1, PC2, color = Tissue, shape = Condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = custom_colors) +
+  ggtitle("PCA Plot of Sham vs RYGB Samples by Tissue")
+
+
+```
+```{r}
+proxjej_table <- subset(sample_table, 
+                        (Tissue == "ProxJej" & Condition == "Sham") |
+                        (Tissue == "Alim" & Condition == "RYGB"))
+proxjej_table$Condition <- droplevels(proxjej_table$Condition)
+
+txi_proxjej <- tximport(proxjej_table$files, type = "salmon", txOut = TRUE)
+dds_proxjej <- DESeqDataSetFromTximport(txi_proxjej, colData = proxjej_table, design = ~Condition)
+dds_proxjej <- DESeq(dds_proxjej)
+
+res_proxjej <- results(dds_proxjej, contrast = c("Condition", "RYGB", "Sham"))
+resLFC_proxjej <- lfcShrink(dds_proxjej, coef = "Condition_RYGB_vs_Sham", type = "ashr")
+
+# 显示差异统计信息
+summary(resLFC_proxjej)
+
+# 画 MA 图
+plotMA(resLFC_proxjej, ylim = c(-2, 2))
+title("ProxJej vs Alim (Sham vs RYGB)")
+
+```
+
+```{r}
+colon_table <- subset(sample_table, Tissue == "Colon" & Condition %in% c("Sham", "RYGB"))
+colon_table$Condition <- droplevels(colon_table$Condition)
+
+txi_colon <- tximport(colon_table$files, type = "salmon", txOut = TRUE)
+dds_colon <- DESeqDataSetFromTximport(txi_colon, colData = colon_table, design = ~Condition)
+dds_colon <- DESeq(dds_colon)
+
+res_colon <- results(dds_colon, contrast = c("Condition", "RYGB", "Sham"))
+resLFC_colon <- lfcShrink(dds_colon, coef = "Condition_RYGB_vs_Sham", type = "ashr")
+
+summary(resLFC_colon)
+
+plotMA(resLFC_colon, ylim = c(-2, 2))
+title("Colon (Sham vs RYGB)")
+
+```
+```{r}
+ileum_table <- subset(sample_table, Tissue == "Ileum" & Condition %in% c("Sham", "RYGB"))
+ileum_table$Condition <- droplevels(ileum_table$Condition)
+
+txi_ileum <- tximport(ileum_table$files, type = "salmon", txOut = TRUE)
+dds_ileum <- DESeqDataSetFromTximport(txi_ileum, colData = ileum_table, design = ~Condition)
+dds_ileum <- DESeq(dds_ileum)
+
+res_ileum <- results(dds_ileum, contrast = c("Condition", "RYGB", "Sham"))
+resLFC_ileum <- lfcShrink(dds_ileum, coef = "Condition_RYGB_vs_Sham", type = "ashr")
+
+summary(resLFC_ileum)
+
+plotMA(resLFC_ileum, ylim = c(-2, 2))
+title("Ileum (Sham vs RYGB)")
+
+```
+
+```{r}
+duodenum_table <- subset(sample_table, 
+                         (Tissue == "Duodenum" & Condition == "Sham") |
+                         (Tissue == "Biliopancr" & Condition == "RYGB"))
+duodenum_table$Condition <- droplevels(duodenum_table$Condition)
+
+txi_duodenum <- tximport(duodenum_table$files, type = "salmon", txOut = TRUE)
+dds_duodenum <- DESeqDataSetFromTximport(txi_duodenum, colData = duodenum_table, design = ~Condition)
+dds_duodenum <- DESeq(dds_duodenum)
+
+res_duodenum <- results(dds_duodenum, contrast = c("Condition", "RYGB", "Sham"))
+resLFC_duodenum <- lfcShrink(dds_duodenum, coef = "Condition_RYGB_vs_Sham", type = "ashr")
+
+summary(resLFC_duodenum)
+
+plotMA(resLFC_duodenum, ylim = c(-2, 2))
+title("Duodenum vs Biliopancr (Sham vs RYGB)")
+
+```
+```{r}
+distjej_table <- subset(sample_table, 
+                        (Tissue == "DistJej" & Condition == "Sham") |
+                        (Tissue == "Common" & Condition == "RYGB"))
+distjej_table$Condition <- droplevels(distjej_table$Condition)
+
+txi_distjej <- tximport(distjej_table$files, type = "salmon", txOut = TRUE)
+dds_distjej <- DESeqDataSetFromTximport(txi_distjej, colData = distjej_table, design = ~Condition)
+dds_distjej <- DESeq(dds_distjej)
+
+res_distjej <- results(dds_distjej, contrast = c("Condition", "RYGB", "Sham"))
+resLFC_distjej <- lfcShrink(dds_distjej, coef = "Condition_RYGB_vs_Sham", type = "ashr")
+
+summary(resLFC_distjej)
+
+plotMA(resLFC_distjej, ylim = c(-2, 2))
+title("DistJej vs Common (Sham vs RYGB)")
+
+```
+```{r}
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+
+# 定义组织与变量映射（Sham vs RYGB 对应）
+res_list <- list(
+  Colon = resLFC_colon,
+  duodenum = resLFC_duodenum,
+  distjej = resLFC_distjej,
+  ileum = resLFC_ileum,
+  proxjej = resLFC_proxjej
+)
+
+# 循环注释并保存
+for (name in names(res_list)) {
+  res <- res_list[[name]]
+  
+  # 去掉版本号
+  ens.trans <- gsub("\\..*", "", rownames(res))
+  
+  # 添加注释
+  res$symbol <- mapIds(org.Rn.eg.db,
+                       keys = ens.trans,
+                       column = "SYMBOL",
+                       keytype = "ENSEMBLTRANS",
+                       multiVals = "first")
+  
+  res$entrez <- mapIds(org.Rn.eg.db,
+                       keys = ens.trans,
+                       column = "ENTREZID",
+                       keytype = "ENSEMBLTRANS",
+                       multiVals = "first")
+  
+  # 按 p 值排序
+  resOrdered <- res[order(res$pvalue), ]
+  res_df <- as.data.frame(resOrdered)
+  
+  # 保存全部注释结果
+  write.csv(res_df, file = paste0(name, "_RYGB_DE_results_all_annotated.csv"))
+  
+  # 筛选 padj < 0.1 保存
+  res_sig <- subset(res_df, padj < 0.1)
+  write.csv(res_sig, file = paste0(name, "_RYGB_DE_results_padj_lt_0.1.csv"))
+}
+
+```
+```{r}
+library(ggVennDiagram)
+library(ggplot2)
+
+# 读取 padj < 0.1 的结果
+colon <- read.csv("Colon_RYGB_DE_results_padj_lt_0.1.csv")
+duodenum <- read.csv("duodenum_RYGB_DE_results_padj_lt_0.1.csv")
+distjej <- read.csv("distjej_RYGB_DE_results_padj_lt_0.1.csv")
+ileum <- read.csv("ileum_RYGB_DE_results_padj_lt_0.1.csv")
+proxjej <- read.csv("proxjej_RYGB_DE_results_padj_lt_0.1.csv")
+
+# 构建基因集
+gene_sets <- list(
+  Colon = na.omit(as.character(colon$symbol)),
+  Duodenum = na.omit(as.character(duodenum$symbol)),
+  Jejunum = na.omit(as.character(distjej$symbol)),
+  Ileum = na.omit(as.character(ileum$symbol)),
+  ProxJej = na.omit(as.character(proxjej$symbol))
+)
+
+# 绘图
+p <- ggVennDiagram(gene_sets, label = "count", label_alpha = 0) +
+  scale_fill_gradient(low = "#F5F5F5", high = "#99CCFF") +
+  theme(legend.position = "none") +
+  theme(text = element_text(size = 14)) +
+  ggtitle("Venn Diagram of DEGs (Sham vs RYGB)")
+
+# 显示图
+print(p)
+
+# 保存图
+ggsave("VennDiagram_Sham_vs_RYGB.png", plot = p, width = 6, height = 6, dpi = 300)
+
+```
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+
+# 设置组织与比较关系列表
+tissue_titles <- list(
+  Colon = "Colon (RYGB) vs Colon (Sham)",
+  duodenum = "Biliopancr (RYGB) vs Duodenum (Sham)",
+  distjej = "Common (RYGB) vs DistJej (Sham)",
+  ileum = "Ileum (RYGB) vs Ileum (Sham)",
+  proxjej = "Alim (RYGB) vs ProxJej (Sham)"
+)
+
+for (tissue in names(tissue_titles)) {
+
+  input_file <- paste0(tissue, "_RYGB_DE_results_all_annotated.csv")
+  output_file <- paste0(tissue, "_RYGB_volcano_pvalue.png")
+  plot_title <- paste0(tissue_titles[[tissue]])
+
+  res <- read.csv(input_file, row.names = 1)
+
+  # 去除没有 symbol 的行
+  res <- res %>% filter(!is.na(symbol))
+
+  # 检查关键列
+  if (!"symbol" %in% colnames(res) || all(is.na(res$symbol))) {
+    warning(paste("Skipping", tissue, "- no valid gene symbols"))
+    next
+  }
+  if (!"pvalue" %in% colnames(res)) {
+    warning(paste("Skipping", tissue, "- no pvalue column found"))
+    next
+  }
+
+  # 设置分组
+  res$group <- "NotSig"
+  res$group[res$log2FoldChange > 1 & res$pvalue < 0.05] <- "Up"
+  res$group[res$log2FoldChange < -1 & res$pvalue < 0.05] <- "Down"
+  res$group <- factor(res$group, levels = c("Down", "NotSig", "Up"))
+
+  # 只取在 -5 到 5 范围内的 Up/Down 基因作为候选标注
+  res_in_range <- res %>%
+    filter(log2FoldChange > -5 & log2FoldChange < 5)
+
+  top_up <- res_in_range %>%
+    filter(group == "Up") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  top_down <- res_in_range %>%
+    filter(group == "Down") %>%
+    arrange(pvalue) %>%
+    head(10)
+
+  label_data <- bind_rows(top_up, top_down) %>% filter(!is.na(symbol))
+
+  # 自定义颜色
+  color_map <- c("Up" = "firebrick", "Down" = "dodgerblue", "NotSig" = "gray70")
+
+  # 绘图
+  p <- ggplot(res, aes(x = log2FoldChange, y = -log10(pvalue), color = group)) +
+    geom_point(alpha = 0.8, size = 3.5) +
+    scale_color_manual(values = color_map) +
+    geom_vline(xintercept = c(-1, 1), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_hline(yintercept = -log10(0.05), linetype = "twodash", color = "gray60", linewidth = 0.8) +
+    geom_text_repel(data = label_data,
+                    aes(label = symbol),
+                    size = 5.5, box.padding = 0.5, max.overlaps = 20,
+                    color = "black") +
+    labs(title = plot_title,
+         x = expression(Log[2]~"Fold Change"),
+         y = expression(-Log[10]~"P-value"),
+         color = "Group") +
+    xlim(-5, 5) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 16),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      legend.title = element_text(size = 15),
+      legend.text = element_text(size = 14),
+      plot.title = element_text(size = 17, face = "bold", hjust = 0.5),
+      axis.line = element_line(color = "black", linewidth = 0.6)
+    )
+
+  # 保存图像
+  ggsave(output_file, plot = p, width = 6.5, height = 9, dpi = 300)
+  message("✅ Volcano plot saved for: ", tissue, 
+          " | labeled Up: ", nrow(top_up), 
+          " | Down: ", nrow(top_down))
+  print(p)
+}
+
+```
+
+
+
+
+
+```{r}
+# ==== STEP 0: 加载必要包 ====
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(tidyverse)
+library(enrichplot)
+library(ggplot2)
+library(ggrepel)
+
+# ==== STEP 1: 读取差异表达分析结果 ====
+deg_file <- "duodenum_DE_results_padj_lt_0.1.csv"  # 改为你的实际文件路径
+deg <- read.csv(deg_file)
+
+# ==== STEP 2: 过滤 DEG（padj < 0.1 且 |log2FC| > 1）====
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1 & deg$padj < 0.1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# ==== STEP 3: SYMBOL 转 ENTREZ ID（大鼠数据库）====
+gene_df <- bitr(deg$symbol,
+                fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# ==== STEP 4: enrichGO 分析（GO: Biological Process）====
+ego <- enrichGO(gene          = gene_ids,
+                OrgDb         = org.Rn.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",               # 也可以换成 "CC", "MF"
+                pvalueCutoff  = 0.1,
+                qvalueCutoff  = 0.1,
+                pAdjustMethod = "BH",
+                readable      = TRUE)
+# ==== STEP 4: 查看结果 ====
+head(ego, 3)  # 打印前 3 个显著通路
+View(ego@result)
+```
+
+
+
+
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== 图 A：使用 DEG（padj<0.1 且 |log2FC|>1）进行 enrichGO ====
+deg_file <- "proxjej_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+View(ego@result)
+
+# DotPlot 可视化 - 图 A
+p1 <- dotplot(ego, showCategory = 15, font.size = 12) +
+  scale_color_gradient(low = "red", high = "blue") +
+  labs(title = "Dot Plot: ProxJej Sham vs ShamChow") +
+  theme(plot.title = element_text(hjust = 0, size = 15, face = "bold"))
+
+
+print(p1)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+library(DOSE)
+
+# ==== 图 A：使用 DEG（padj<0.1 且 |log2FC|>1）进行 enrichGO ====
+deg_file <- "proxjej_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+View(ego@result)
+
+dotplot(ego, showCategory=30) + ggtitle("ProxJej Sham vs ShamChow")
+ggsave("ProxJej Sham vs ShamChow.png", width = 6, height = 10, dpi = 300)
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（ProxJej Sham vs ShamChow）====
+all_file <- "proxjej_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 设置随机种子 ====
+set.seed(1234)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  dplyr::filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  dplyr::arrange(desc(log2FoldChange)) %>%
+  dplyr::distinct(symbol, .keep_all = TRUE) %>%
+  dplyr::mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  dplyr::select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# === （绘图部分不包含 jitter 或 set.seed，再按你已有代码继续）===
+View(gsea_res@result)
+```
+
+
+```{r}
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  dplyr::arrange(desc(abs(NES))) %>%
+  dplyr::slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),  # 左对齐关键设置
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  patchwork::plot_annotation(
+    title = "GSEA GO Pathways (ProxJej Sham vs ShamChow)"
+  )
+
+ggsave("Barplot_GSEA_NES_ProxJej_vs_ShamChow_title_and_ylabel_left_fixed_yaxis.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+print(p2_final)
+
+```
+
+
+```{r}
+# ==== 提取前 20 项（按 abs(NES) 降序） ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  dplyr::slice(1:20)
+
+# 去掉描述中的下划线
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75, linewidth = 0.3, color = "black") +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(x = "GO Term", y = "Normalized Enrichment Score (NES)") +
+  theme(
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 添加主标题 ====
+p2_final <- p2_core + plot_annotation(
+  title = "GSEA GO Pathways (ProxJej Sham vs ShamChow)"
+)
+
+# ==== 保存图像 ====
+ggsave("Barplot_GSEA_NES_ProxJej_vs_ShamChow.png", 
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# ==== 显示图像 ====
+print(p2_final)
+
+```
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== 文件与条件 ====
+all_file <- "proxjej_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（必须排序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+# 设置名称并排序（必要步骤）
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析（加入推荐参数）====
+gsea_res <- gseGO(
+  geneList = gene_list,
+  OrgDb = org.Rn.eg.db,
+  ont = "BP",  # Biological Process
+  keyType = "SYMBOL",
+  minGSSize = 10,
+  maxGSSize = 500,
+  exponent = 1,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose = TRUE,
+  seed = TRUE,
+  by = "fgsea"
+)
+View(gsea_res@result)
+```
+
+
+
+
+
+```{r}
+
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== 文件与条件 ====
+all_file <- "proxjej_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList ====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE) 
+
+# ==== 提取前 20 项，处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res)[1:20, ]
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 x轴标签 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (ProxJej Sham vs ShamChow)"
+  )
+
+ggsave("Barplot_GSEA_NES_ProxJej_vs_ShamChow_title_and_ylabel_left.png",
+       plot = p2_final, width = 8, height = 6, dpi = 300)
+
+print(p2_final)
+
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+library(DOSE)
+
+# ==== 图 A：使用 DEG（padj<0.1 且 |log2FC|>1）进行 enrichGO ====
+deg_file <- "duodenum_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+
+dotplot(ego, showCategory=30) + ggtitle("Duodenum Sham vs ShamChow")
+ggsave("Duodenum Sham vs ShamChow.png", width = 6, height = 10, dpi = 300)
+
+```
+
+
+
+```{r}
+
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "duodenum_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, title = "Dot Plot: Duodenum Sham vs ShamChow") +
+  scale_color_gradient(low = "red", high = "blue")
+ggsave("DotPlot_GO_Duodenum_vs_ShamChow.png", plot = p1, width = 8, height = 6, dpi = 300)
+print(p1)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)     # ✅ 大鼠数据库
+library(enrichplot)
+library(patchwork)
+
+# ==== 读取全基因差异表达结果文件（以 Duodenum 为例）====
+res_all <- read.csv("duodenum_DE_results_all_annotated.csv")
+
+# ==== 构建 geneList：使用 SYMBOL 命名，去除 NA 和 log2FC 为 0 的值 ====
+gene_list <- res_all$log2FoldChange
+names(gene_list) <- res_all$symbol
+
+# 过滤非法值（NA、空名、log2FC为0）
+gene_list <- gene_list[!is.na(names(gene_list)) & names(gene_list) != ""]
+gene_list <- gene_list[!is.na(gene_list) & gene_list != 0]
+
+# ==== 固定降序 + 设置种子 + 打破并列 ====
+set.seed(1234)
+gene_list <- gene_list + rnorm(length(gene_list), mean = 0, sd = 1e-6)  # 稍加扰动
+gene_list <- sort(gene_list, decreasing = TRUE)
+# ==== 运行 GSEA 分析（GO Biological Process 类别）====
+gsea_res <- gseGO(
+  geneList     = gene_list,
+  OrgDb        = org.Rn.eg.db,
+  ont          = "BP",            # Biological Process
+  keyType      = "SYMBOL",
+  pvalueCutoff = 0.1,
+  verbose      = FALSE
+)
+
+# ==== 查看分析结果 ====
+View(gsea_res@result)
+```
+
+
+```{r}
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  dplyr::slice(1:20)
+
+# 去掉描述中的下划线
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75, linewidth = 0.3, color = "black") +  # 增加黑色边框
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(x = "GO Term", y = "Normalized Enrichment Score (NES)") +
+  theme(
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),  # 左对齐
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 添加主标题 ====
+p2_final <- p2_core + plot_annotation(
+  title = "GSEA GO Pathways (Duodenum Sham vs ShamChow)"
+)
+
+# ==== 保存图像 ====
+ggsave("Barplot_GSEA_NES_Duodenum_vs_ShamChow.png", 
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# ==== 显示图像 ====
+print(p2_final)
+
+
+```
+
+```{r}
+p <- dotplot(gsea_res, showCategory = 30, font.size = 10) +
+  ggtitle("ProxJej Sham vs ShamChow") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    panel.grid.major.y = element_line(color = "grey60", linewidth = 0.5),  # 加粗 Y 轴横线
+    panel.grid.major.x = element_blank(),  # 如果不想要纵向线
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8)
+  )
+
+
+ggsave("gsea_dotplot_pretty.png", plot = p, width = 8, height = 10, dpi = 300)
+
+```
+
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "Colon_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, title = "Dot Plot: Colon Sham vs ShamChow") +
+  scale_color_gradient(low = "red", high = "blue")
+ggsave("DotPlot_GO_Colon_vs_ShamChow.png", plot = p1, width = 8, height = 6, dpi = 300)
+print(p1)
+
+```
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Colon Sham vs ShamChow）====
+all_file <- "Colon_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),  # 左对齐关键设置
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Colon Sham vs ShamChow)"
+  )
+
+ggsave("Barplot_GSEA_NES_Colon_vs_ShamChow_title_and_ylabel_left_fixed_yaxis.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "distjej_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: DistJej Sham vs ShamChow") +
+  scale_color_gradient(low = "red", high = "blue")
+ggsave("DotPlot_GO_DistJej_RYGB_vs_Sham.png", plot = p1, width = 8, height = 6, dpi = 300)
+print(p1)
+
+```
+```{r}
+# 安装 CRAN 包
+install.packages(c("ggplot2", "dplyr", "patchwork"))
+
+# 安装 Bioconductor 包
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(c("clusterProfiler", "org.Rn.eg.db"))
+
+```
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（DistJej RYGB vs Sham）====
+all_file <- "distjej_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),  # 左对齐关键设置
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (DistJej Sham vs ShamChow)"
+  )
+
+
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+library(DOSE)
+
+# ==== 图 A：使用 DEG（padj<0.1 且 |log2FC|>1）进行 enrichGO ====
+deg_file <- "ileum_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# 查看结果
+View(ego@result)
+
+# 绘图并保存
+dotplot(ego, showCategory = 30) + ggtitle("Ileum Sham vs ShamChow")
+ggsave("Ileum Sham vs ShamChow.png", width = 6, height = 10, dpi = 300)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Ileum Sham vs ShamChow）====
+all_file <- "ileum_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Ileum Sham vs ShamChow)"
+  )
+
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "ileum_RYGB_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: Sham vs RYGB") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 保存图像
+ggsave("DotPlot_GO_Ileum_Sham_vs_RYGB.png", plot = p1, width = 8, height = 6, dpi = 300)
+
+# 打印图像
+print(p1)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Ileum Sham vs RYGB）====
+all_file <- "ileum_RYGB_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Ileum Sham vs RYGB)"
+  )
+
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "Colon_RYGB_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: Colon Sham vs RYGB") +
+  scale_color_gradient(low = "red", high = "blue")
+
+
+# 打印图像
+print(p1)
+
+```
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Colon Sham vs RYGB）====
+all_file <- "Colon_RYGB_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "NES"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Colon Sham vs RYGB)"
+  )
+
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "distjej_RYGB_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: DistJej (Sham) vs Common (RYGB)") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 保存图像（可选）
+ggsave("DotPlot_GO_DistJej_Sham_vs_Common_RYGB.png", plot = p1, width = 8, height = 6, dpi = 300)
+
+# 打印图像
+print(p1)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（DistJej Sham vs Common RYGB）====
+all_file <- "distjej_RYGB_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (DistJej (Sham) vs Common (RYGB))"
+  )
+
+# 保存图像（可选）
+ggsave("Barplot_GSEA_NES_DistJej_Sham_vs_Common_RYGB.png", plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "duodenum_RYGB_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: Duodenum (Sham) vs Biliopancr (RYGB)") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 保存图像（可选）
+ggsave("DotPlot_GO_Duodenum_Sham_vs_Biliopancr_RYGB.png", plot = p1, width = 8, height = 6, dpi = 300)
+
+# 打印图像
+print(p1)
+
+```
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== 读取你上传的数据文件 ====
+res_all <- read.csv("duodenum_RYGB_DE_results_all_annotated.csv")
+
+# ==== 数据清洗：去掉缺失，保留每个 symbol 一个条目（log2FC 最大） ====
+res_clean <- res_all %>%
+  filter(!is.na(log2FoldChange), !is.na(symbol)) %>%
+  group_by(symbol) %>%
+  slice_max(order_by = abs(log2FoldChange), n = 1) %>%
+  ungroup()
+
+# ==== 构建 geneList（GSEA输入）====
+gene_list <- res_clean %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== 运行 GSEA GO（使用 SYMBOL 作为 keyType） ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = TRUE)
+
+# ==== 提取前20个通路，按 |NES| 排序 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+
+# 清洗 GO term 名称美观
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：NES 条形图 ====
+p_gsea <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES, fill = NES > 0)) +
+  geom_col(width = 0.75, show.legend = FALSE) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "GSEA GO Pathways (Duodenum (Sham) vs Biliopancr (RYGB))",
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold"),
+    axis.text.y = element_text(size = 11, face = "bold"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+
+
+# ==== 显示图像 ====
+print(p_gsea)
+
+
+```
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "proxjej_RYGB_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12, 
+              title = "Dot Plot: ProxJej (Sham) vs Alim (RYGB)") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 保存图像
+ggsave("DotPlot_GO_ProxJej_Sham_vs_Alim_RYGB.png", plot = p1, width = 8, height = 6, dpi = 300)
+
+# 打印图像
+print(p1)
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（ProxJej Sham vs Alim RYGB）====
+all_file <- "proxjej_RYGB_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+set.seed(1234)
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "NES"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (ProxJej (Sham) vs Alim (RYGB))"
+  )
+
+# 保存图像
+ggsave("Barplot_GSEA_NES_ProxJej_Sham_vs_Alim_RYGB.png", plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+```
+
+
+```{r}
+View(gsea_res)
+```
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)  # 用于 arrange()
+
+# ==== 筛选 Sham 和 SHAMWM 样本 ====
+sample_table <- subset(sample_table, Condition %in% c("Sham", "SHAMWM"))
+
+# 设置 Condition 和 Tissue 为因子，Sham 为基线，Tissue 自定义顺序
+sample_table$Condition <- factor(sample_table$Condition, levels = c("Sham", "SHAMWM"))
+sample_table$Tissue <- factor(sample_table$Tissue,
+                              levels = c("ProxJej", "Duodenum", "Colon", "DistJej", "Ileum"))
+
+# ==== 强制按照 Tissue 顺序排列 sample_table 行 ====
+sample_table <- sample_table %>%
+  arrange(factor(Tissue, levels = levels(sample_table$Tissue)))
+
+# ==== 导入表达数据并创建 DESeq2 对象 ====
+txi <- tximport(sample_table$files, type = "salmon", txOut = TRUE)
+dds <- DESeqDataSetFromTximport(txi, colData = sample_table, design = ~ Tissue + Condition)
+
+# ==== VST 转换 ====
+vsd <- vst(dds, blind = TRUE)
+
+# ==== 提取 PCA 数据 ====
+pcaData <- plotPCA(vsd, intgroup = c("Tissue", "Condition"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+# ==== 自定义颜色，严格对应组织顺序 ====
+custom_colors <- c(
+  "ProxJej"   = "#FF6666",
+  "Duodenum" = "#9ecae1",
+  "Colon"     = "#4DAF4A",
+  "DistJej"   = "#FFA500",
+  "Ileum"     = "#984EA3"
+)
+
+# ==== 绘制 PCA 图 ====
+ggplot(pcaData, aes(PC1, PC2, color = Tissue, shape = Condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = custom_colors) +
+  ggtitle("PCA Plot of Sham vs SHAMWM Samples by Tissue")
+
+```
+```{r}
+print(dds)
+colData(dds)
+```
+```{r}
+# ==== 加载必要包 ====
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(pheatmap)
+library(IHW)
+library(ashr)
+
+# ==== 筛选 Colon 中 Sham 和 SHAMWM 的样本 ====
+colon_table <- subset(sample_table, Tissue == "Colon" & Condition %in% c("Sham", "SHAMWM"))
+colon_table$Condition <- factor(colon_table$Condition, levels = c("Sham", "SHAMWM"))  # 明确设置 Sham 为基底
+colon_table$Condition <- droplevels(colon_table$Condition)
+
+# ==== 导入表达量数据 ====
+txi_colon <- tximport(colon_table$files, type = "salmon", txOut = TRUE)
+
+# ==== 创建 DESeq2 数据集 ====
+dds_colon <- DESeqDataSetFromTximport(txi_colon, colData = colon_table, design = ~Condition)
+
+# ==== 差异分析 ====
+dds_colon <- DESeq(dds_colon)
+
+# ==== 提取结果：SHAMWM 相对于 Sham（Sham 为基底） ====
+res_colon <- results(dds_colon, contrast = c("Condition", "SHAMWM", "Sham"))
+
+# ==== log2FoldChange 收缩 ====
+resLFC_colon <- lfcShrink(dds_colon, coef = "Condition_SHAMWM_vs_Sham", type = "ashr")
+
+# ==== 使用 IHW 方法的 padj 计算 ====
+resIHW <- results(dds_colon, filterFun = ihw)
+
+# ==== 输出结果总结 ====
+summary(resIHW)
+
+# ==== 绘制 MA 图 ====
+plotMA(resLFC_colon, ylim = c(-2, 2))
+title("Colon: SHAMWM vs Sham")
+
+```
+```{r}
+proxjej_table <- subset(sample_table, Tissue == "ProxJej" & Condition %in% c("Sham", "SHAMWM"))
+proxjej_table$Condition <- factor(proxjej_table$Condition, levels = c("Sham", "SHAMWM"))
+proxjej_table$Condition <- droplevels(proxjej_table$Condition)
+
+txi_proxjej <- tximport(proxjej_table$files, type = "salmon", txOut = TRUE)
+dds_proxjej <- DESeqDataSetFromTximport(txi_proxjej, colData = proxjej_table, design = ~Condition)
+dds_proxjej <- DESeq(dds_proxjej)
+
+res_proxjej <- results(dds_proxjej, contrast = c("Condition", "SHAMWM", "Sham"))
+resLFC_proxjej <- lfcShrink(dds_proxjej, coef = "Condition_SHAMWM_vs_Sham", type = "ashr")
+summary(res_proxjej)
+
+plotMA(resLFC_proxjej, ylim = c(-2, 2))
+title("ProxJej: SHAMWM vs Sham")
+
+```
+```{r}
+duodenum_table <- subset(sample_table, Tissue == "Duodenum" & Condition %in% c("Sham", "SHAMWM"))
+duodenum_table$Condition <- factor(duodenum_table$Condition, levels = c("Sham", "SHAMWM"))
+duodenum_table$Condition <- droplevels(duodenum_table$Condition)
+
+txi_duodenum <- tximport(duodenum_table$files, type = "salmon", txOut = TRUE)
+dds_duodenum <- DESeqDataSetFromTximport(txi_duodenum, colData = duodenum_table, design = ~Condition)
+dds_duodenum <- DESeq(dds_duodenum)
+
+res_duodenum <- results(dds_duodenum, contrast = c("Condition", "SHAMWM", "Sham"))
+resLFC_duodenum <- lfcShrink(dds_duodenum, coef = "Condition_SHAMWM_vs_Sham", type = "ashr")
+summary(res_duodenum)
+
+plotMA(resLFC_duodenum, ylim = c(-2, 2))
+title("Duodenum: SHAMWM vs Sham")
+
+```
+```{r}
+distjej_table <- subset(sample_table, Tissue == "DistJej" & Condition %in% c("Sham", "SHAMWM"))
+distjej_table$Condition <- factor(distjej_table$Condition, levels = c("Sham", "SHAMWM"))
+distjej_table$Condition <- droplevels(distjej_table$Condition)
+
+txi_distjej <- tximport(distjej_table$files, type = "salmon", txOut = TRUE)
+dds_distjej <- DESeqDataSetFromTximport(txi_distjej, colData = distjej_table, design = ~Condition)
+dds_distjej <- DESeq(dds_distjej)
+
+res_distjej <- results(dds_distjej, contrast = c("Condition", "SHAMWM", "Sham"))
+resLFC_distjej <- lfcShrink(dds_distjej, coef = "Condition_SHAMWM_vs_Sham", type = "ashr")
+summary(res_distjej)
+
+plotMA(resLFC_distjej, ylim = c(-2, 2))
+title("DistJej: SHAMWM vs Sham")
+
+```
+```{r}
+ileum_table <- subset(sample_table, Tissue == "Ileum" & Condition %in% c("Sham", "SHAMWM"))
+ileum_table$Condition <- factor(ileum_table$Condition, levels = c("Sham", "SHAMWM"))
+ileum_table$Condition <- droplevels(ileum_table$Condition)
+
+txi_ileum <- tximport(ileum_table$files, type = "salmon", txOut = TRUE)
+dds_ileum <- DESeqDataSetFromTximport(txi_ileum, colData = ileum_table, design = ~Condition)
+dds_ileum <- DESeq(dds_ileum)
+
+res_ileum <- results(dds_ileum, contrast = c("Condition", "SHAMWM", "Sham"))
+resLFC_ileum <- lfcShrink(dds_ileum, coef = "Condition_SHAMWM_vs_Sham", type = "ashr")
+summary(res_ileum)
+
+plotMA(resLFC_ileum, ylim = c(-2, 2))
+title("Ileum: SHAMWM vs Sham")
+
+```
+```{r}
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+
+# 定义组织与变量映射（Sham vs SHAMWM）
+res_list <- list(
+  Colon = resLFC_colon,
+  duodenum = resLFC_duodenum,
+  distjej = resLFC_distjej,
+  ileum = resLFC_ileum,
+  proxjej = resLFC_proxjej
+)
+
+# 循环注释并保存
+for (name in names(res_list)) {
+  res <- res_list[[name]]
+  
+  # 去掉 Ensembl transcript ID 的版本号（如 ENSRNOT00000000001.1 → ENSRNOT00000000001）
+  ens.trans <- gsub("\\..*", "", rownames(res))
+  
+  # 添加 SYMBOL 注释
+  res$symbol <- mapIds(org.Rn.eg.db,
+                       keys = ens.trans,
+                       column = "SYMBOL",
+                       keytype = "ENSEMBLTRANS",
+                       multiVals = "first")
+  
+  # 添加 ENTREZID 注释
+  res$entrez <- mapIds(org.Rn.eg.db,
+                       keys = ens.trans,
+                       column = "ENTREZID",
+                       keytype = "ENSEMBLTRANS",
+                       multiVals = "first")
+  
+  # 按原始 p 值排序
+  resOrdered <- res[order(res$pvalue), ]
+  res_df <- as.data.frame(resOrdered)
+  
+  # 保存全部注释结果
+  write.csv(res_df, file = paste0(name, "_SHAMWM_DE_results_all_annotated.csv"))
+  
+  # 筛选 padj < 0.1 保存显著结果
+  res_sig <- subset(res_df, padj < 0.1)
+  write.csv(res_sig, file = paste0(name, "_SHAMWM_DE_results_padj_lt_0.1.csv"))
+}
+
+```
+```{r}
+library(ggVennDiagram)
+library(ggplot2)
+
+# 读取 padj < 0.1 的结果（Sham vs SHAMWM）
+colon <- read.csv("Colon_SHAMWM_DE_results_padj_lt_0.1.csv")
+duodenum <- read.csv("duodenum_SHAMWM_DE_results_padj_lt_0.1.csv")
+distjej <- read.csv("distjej_SHAMWM_DE_results_padj_lt_0.1.csv")
+ileum <- read.csv("ileum_SHAMWM_DE_results_padj_lt_0.1.csv")
+proxjej <- read.csv("proxjej_SHAMWM_DE_results_padj_lt_0.1.csv")
+
+# 构建基因集
+gene_sets <- list(
+  Colon = na.omit(as.character(colon$symbol)),
+  Duodenum = na.omit(as.character(duodenum$symbol)),
+  Jejunum = na.omit(as.character(distjej$symbol)),
+  Ileum = na.omit(as.character(ileum$symbol)),
+  ProxJej = na.omit(as.character(proxjej$symbol))
+)
+
+# 绘图
+p <- ggVennDiagram(gene_sets, label = "count", label_alpha = 0) +
+  scale_fill_gradient(low = "#F5F5F5", high = "#99CCFF") +
+  theme(legend.position = "none") +
+  theme(text = element_text(size = 14)) +
+  ggtitle("Venn Diagram of DEGs (Sham vs SHAMWM)")
+
+# 显示图
+print(p)
+
+# 保存图
+ggsave("VennDiagram_Sham_vs_SHAMWM.png", plot = p, width = 6, height = 6, dpi = 300)
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+
+# 设置组织与比较关系列表（Sham vs SHAMWM）
+tissue_titles <- list(
+  Colon = "Colon (SHAMWM) vs Colon (Sham)",
+  duodenum = "Duodenum (SHAMWM) vs Duodenum (Sham)",
+  distjej = "DistJej (SHAMWM) vs DistJej (Sham)",
+  ileum = "Ileum (SHAMWM) vs Ileum (Sham)",
+  proxjej = "ProxJej (SHAMWM) vs ProxJej (Sham)"
+)
+
+for (tissue in names(tissue_titles)) {
+
+  input_file <- paste0(tissue, "_SHAMWM_DE_results_all_annotated.csv")
+  output_file <- paste0(tissue, "_SHAMWM_volcano_pvalue.png")
+  plot_title <- tissue_titles[[tissue]]
+
+  res <- read.csv(input_file, row.names = 1)
+
+  # 去除没有 symbol 的行
+  res <- res %>% filter(!is.na(symbol))
+
+  # 检查关键列
+  if (!"symbol" %in% colnames(res) || all(is.na(res$symbol))) {
+    warning(paste("Skipping", tissue, "- no valid gene symbols"))
+    next
+  }
+  if (!"padj" %in% colnames(res)) {
+    warning(paste("Skipping", tissue, "- no padj column found"))
+    next
+  }
+
+  # 设置分组
+  res$group <- "NotSig"
+  res$group[res$log2FoldChange > 1 & res$padj < 0.1] <- "Up"
+  res$group[res$log2FoldChange < -1 & res$padj < 0.1] <- "Down"
+  res$group <- factor(res$group, levels = c("Down", "NotSig", "Up"))
+
+  # 只取在 -5 到 5 范围内的 Up/Down 基因作为候选标注
+  res_in_range <- res %>%
+    filter(log2FoldChange > -5 & log2FoldChange < 5)
+
+  top_up <- res_in_range %>%
+    filter(group == "Up") %>%
+    arrange(padj) %>%
+    head(10)
+
+  top_down <- res_in_range %>%
+    filter(group == "Down") %>%
+    arrange(padj) %>%
+    head(10)
+
+  label_data <- bind_rows(top_up, top_down) %>% filter(!is.na(symbol))
+
+  # 自定义颜色
+  color_map <- c("Up" = "#D73027", "Down" = "#4575B4", "NotSig" = "grey80")
+
+  # 绘图
+  p <- ggplot(res, aes(x = log2FoldChange, y = -log10(padj), color = group)) +
+    geom_point(alpha = 0.8, size = 3.5) +
+    scale_color_manual(values = color_map) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "gray60", linewidth = 0.8) +
+    geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "gray60", linewidth = 0.8) +
+    geom_text_repel(data = label_data,
+                    aes(label = symbol),
+                    size = 5.5, box.padding = 0.5, max.overlaps = 20,
+                    color = "black") +
+    labs(title = plot_title,
+         x = expression(Log[2]~"Fold Change"),
+         y = expression(-Log[10]~"Adjusted P-value"),
+         color = "Group") +
+    xlim(-5, 5) +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 16),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      legend.title = element_text(size = 15),
+      legend.text = element_text(size = 14),
+      plot.title = element_text(size = 17, face = "bold", hjust = 0.5),
+      axis.line = element_line(color = "black", linewidth = 0.6)
+    )
+
+  # 保存图像
+  ggsave(output_file, plot = p, width = 6.5, height = 9, dpi = 300)
+  message("✅ Volcano plot saved for: ", tissue, 
+          " | labeled Up: ", nrow(top_up), 
+          " | Down: ", nrow(top_down))
+  print(p)
+}
+
+
+```
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "proxjej_SHAMWM_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12,
+              title = "Dot Plot: ProxJej Sham vs SHAMWM") +
+  scale_color_gradient(low = "red", high = "blue")
+
+
+
+print(p1)
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（ProxJej Sham vs SHAMWM）====
+all_file <- "proxjej_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (ProxJej Sham vs SHAMWM)"
+  )
+
+# 保存图像
+ggsave("Barplot_GSEA_NES_ProxJej_Sham_vs_SHAMWM.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "duodenum_SHAMWM_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12,
+              title = "Dot Plot: Duodenum Sham vs SHAMWM") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 显示图像
+print(p1)
+
+# 可选：保存图像
+ggsave("DotPlot_GO_Duodenum_Sham_vs_SHAMWM.png", plot = p1, width = 8, height = 6, dpi = 300)
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Duodenum Sham vs SHAMWM）====
+all_file <- "duodenum_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "NES"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Duodenum Sham vs SHAMWM)"
+  )
+
+# 保存图像
+ggsave("Barplot_GSEA_NES_Duodenum_Sham_vs_SHAMWM.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "Colon_SHAMWM_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12,
+              title = "Dot Plot: Colon Sham vs SHAMWM") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 显示图像
+print(p1)
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Colon Sham vs SHAMWM）====
+all_file <- "Colon_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 abs(NES) 降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(abs(NES))) %>%
+  slice(1:20)
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "Normalized Enrichment Score (NES)"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Colon Sham vs SHAMWM)"
+  )
+
+ggsave("Barplot_GSEA_NES_Colon_Sham_vs_SHAMWM.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "distjej_SHAMWM_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12,
+              title = "Dot Plot: DistJej Sham vs SHAMWM") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 显示图像
+print(p1)
+
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（DistJej SHAMWM vs Sham）====
+all_file <- "distjej_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 设置随机种子 ====
+set.seed(1234)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  dplyr::filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  dplyr::arrange(desc(log2FoldChange)) %>%
+  dplyr::distinct(symbol, .keep_all = TRUE) %>%
+  dplyr::mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  dplyr::select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 查看结果 ====
+View(gsea_res@result)
+
+```
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（DistJej SHAMWM vs Sham）====
+all_file <- "distjej_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 设置随机种子 ====
+set.seed(1234)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  dplyr::filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  dplyr::arrange(desc(log2FoldChange)) %>%
+  dplyr::distinct(symbol, .keep_all = TRUE) %>%
+  dplyr::mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  dplyr::select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析：使用 fgsea 方法 ====
+gsea_res <- gseGO(
+  geneList = gene_list,
+  OrgDb = org.Rn.eg.db,
+  ont = "BP",
+  keyType = "SYMBOL",
+  pvalueCutoff = 0.1,
+  verbose = FALSE,
+  by = "fgsea"  # 指定使用更快的 fgsea 算法
+)
+
+# ==== 查看结果 ====
+View(gsea_res@result)
+
+```
+```{r}
+library(org.Rn.eg.db)
+keytypes(org.Rn.eg.db)
+head(org.Rn.eg.db)
+```
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+
+# ==== 读取数据 ====
+res_all <- read.csv("distjej_SHAMWM_DE_results_all_annotated.csv", header = TRUE)
+
+# ==== 设置随机种子 ====
+set.seed(1234)
+
+# ==== 确保第一列为 ENTREZID，如果没有列名，可以用 [[1]] 取用 ====
+gene_list <- res_all %>%
+  dplyr::filter(!is.na(log2FoldChange)) %>%
+  dplyr::mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  dplyr::select(ENTREZID = 1, log2FoldChange)  # 把第1列当成 ENTREZID
+
+# ==== 构建命名向量 ====
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$ENTREZID)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== GSEA 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "ENTREZID",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE,
+                  by = "fgsea")
+
+# ==== 查看结果 ====
+View(gsea_res@result)
+
+```
+
+
+```{r}
+# ==== 提取前 20 项（按 NES 值降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(NES)) %>%
+  slice(1:20)
+
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "NES"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (DistJej Sham vs SHAMWM)"
+  )
+
+ggsave("Barplot_GSEA_NES_DistJej_Sham_vs_SHAMWM.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(readr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(enrichplot)
+
+# ==== enrichGO：使用 DEG（padj<0.1 且 |log2FC|>1） ====
+deg_file <- "ileum_SHAMWM_DE_results_padj_lt_0.1.csv"
+deg <- read.csv(deg_file)
+
+# 过滤有效基因
+deg <- deg[!is.na(deg$symbol) & !is.na(deg$log2FoldChange), ]
+deg <- deg[abs(deg$log2FoldChange) > 1, ]
+deg <- distinct(deg, symbol, .keep_all = TRUE)
+
+# SYMBOL 转 ENTREZ ID
+gene_df <- bitr(deg$symbol, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Rn.eg.db)
+gene_ids <- gene_df$ENTREZID
+
+# enrichGO 分析
+ego <- enrichGO(gene = gene_ids,
+                OrgDb = org.Rn.eg.db,
+                ont = "BP",
+                pvalueCutoff = 0.05,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+# DotPlot 可视化（以 Sham 为对照）
+p1 <- dotplot(ego, showCategory = 15, font.size = 12,
+              title = "Dot Plot: Ileum Sham vs SHAMWM") +
+  scale_color_gradient(low = "red", high = "blue")
+
+# 显示图像
+print(p1)
+
+```
+
+```{r}
+# ==== 加载必要包 ====
+library(ggplot2)
+library(dplyr)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(patchwork)
+
+# ==== GSEA：使用全基因列表（Ileum Sham vs SHAMWM）====
+all_file <- "ileum_SHAMWM_DE_results_all_annotated.csv"
+res_all <- read.csv(all_file)
+
+# ==== 构建 geneList（log2FC 排序 + jitter + 降序）====
+gene_list <- res_all %>%
+  filter(!is.na(log2FoldChange) & !is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  mutate(log2FoldChange = jitter(log2FoldChange, amount = 1e-6)) %>%
+  select(symbol, log2FoldChange)
+
+gene_list <- setNames(gene_list$log2FoldChange, gene_list$symbol)
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+# ==== gseGO 分析 ====
+gsea_res <- gseGO(geneList = gene_list,
+                  OrgDb = org.Rn.eg.db,
+                  ont = "BP",
+                  keyType = "SYMBOL",
+                  pvalueCutoff = 0.1,
+                  verbose = FALSE)
+
+# ==== 提取前 20 项（按 NES 值降序），处理 GO 名 ====
+gsea_df <- as.data.frame(gsea_res) %>%
+  arrange(desc(NES)) %>%
+  slice(1:20)
+
+gsea_df$Description <- gsub("GO_", "", gsea_df$Description)
+gsea_df$Description <- gsub("_", " ", gsea_df$Description)
+
+# ==== 绘图：条形图 + 左对齐标题和 y 轴文字 ====
+p2_core <- ggplot(gsea_df, aes(x = reorder(Description, NES), y = NES)) +
+  geom_col(fill = "dodgerblue", width = 0.75) +
+  geom_hline(yintercept = 0, color = "black") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "GO Term",
+    y = "NES"
+  ) +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(size = 15, face = "bold", hjust = 0),
+    axis.title.x = element_text(face = "bold", hjust = 0),
+    axis.text.y = element_text(size = 11, face = "bold", hjust = 0),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# ==== 设置标题 + 保存 ====
+p2_final <- p2_core +
+  plot_annotation(
+    title = "GSEA GO Pathways (Ileum Sham vs SHAMWM)"
+  )
+
+ggsave("Barplot_GSEA_NES_Ileum_Sham_vs_SHAMWM.png",
+       plot = p2_final, width = 10, height = 6, dpi = 300)
+
+# 打印图像
+print(p2_final)
+
+```
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library(org.Rn.eg.db)
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Step 1: 读取你的两个文件
+df_shamwm <- read_csv("duodenum_SHAMWM_DE_results_padj_lt_0.1.csv")
+df_rygb   <- read_csv("duodenum_RYGB_DE_results_padj_lt_0.1.csv")
+
+# Step 2: 提取非缺失 ENTREZ ID
+genes_shamwm <- df_shamwm %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+genes_rygb   <- df_rygb   %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+
+# Step 3: 构建 compareCluster 输入对象
+gene_list <- list(
+  SHAMWM_vs_Sham = genes_shamwm,
+  RYGB_vs_Sham   = genes_rygb
+)
+
+# Step 4: 执行 GO BP 富集比较
+ck <- compareCluster(
+  geneCluster = gene_list,
+  fun         = "enrichGO",
+  OrgDb       = org.Rn.eg.db,
+  ont         = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2
+)
+
+# 可读性增强（转换 SYMBOL）
+ck <- setReadable(ck, OrgDb = org.Rn.eg.db, keyType = "ENTREZID")
+
+# Step 5: dotplot 可视化并保存为图片
+dotplot_out <- dotplot(ck, showCategory = 15, title = "GO BP Comparison: SHAMWM vs RYGB in Duodenum")
+ggsave("compare_dotplot_duodenum.png", plot = dotplot_out, width = 8, height = 10, dpi = 300)
+
+# Step 6: cnetplot 网络图（新版推荐写法）
+cnet_out <- cnetplot(ck, categorySize = "pvalue", cex.params = list(foldChange = NULL))
+ggsave("compare_cnetplot_duodenum.png", plot = cnet_out, width = 10, height = 10, dpi = 300)
+```
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library(org.Rn.eg.db)
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Step 1: 读取 ProxJej 的两个文件
+df_shamwm <- read_csv("proxjej_SHAMWM_DE_results_padj_lt_0.1.csv", show_col_types = FALSE)
+df_rygb   <- read_csv("proxjej_RYGB_DE_results_padj_lt_0.1.csv", show_col_types = FALSE)
+
+# Step 2: 提取非缺失 ENTREZ ID
+genes_shamwm <- df_shamwm %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+genes_rygb   <- df_rygb   %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+
+# Step 3: 构建 compareCluster 输入对象
+gene_list <- list(
+  SHAMWM_vs_Sham = genes_shamwm,
+  RYGB_vs_Sham   = genes_rygb
+)
+
+# Step 4: 执行 GO BP 富集比较
+ck <- compareCluster(
+  geneCluster = gene_list,
+  fun         = "enrichGO",
+  OrgDb       = org.Rn.eg.db,
+  ont         = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2
+)
+
+# 可读性增强（转换 SYMBOL）
+ck <- setReadable(ck, OrgDb = org.Rn.eg.db, keyType = "ENTREZID")
+
+# Step 5: dotplot 可视化并保存为图片
+dotplot_out <- dotplot(ck, showCategory = 15, title = "GO BP Comparison: SHAMWM vs RYGB in ProxJej")
+ggsave("compare_dotplot_proxjej.png", plot = dotplot_out, width = 8, height = 10, dpi = 300)
+cnet_out <- cnetplot(
+  ck,
+  categorySize = "pvalue",
+  showCategory = 10,
+  cex.params = list(foldChange = NULL)
+)
+
+ggsave("compare_cnetplot_proxjej.png", plot = cnet_out, width = 12, height = 10, dpi = 300)
+```
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library(org.Rn.eg.db)
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Step 1: 读取 DistJej 的两个差异表达文件
+df_shamwm <- read_csv("distjej_SHAMWM_DE_results_padj_lt_0.1.csv", show_col_types = FALSE)
+df_rygb   <- read_csv("distjej_RYGB_DE_results_padj_lt_0.1.csv", show_col_types = FALSE)
+
+# Step 2: 提取 ENTREZ ID（去除 NA）
+genes_shamwm <- df_shamwm %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+genes_rygb   <- df_rygb   %>% filter(!is.na(entrez)) %>% pull(entrez) %>% as.character()
+
+# Step 3: 构建比较列表
+gene_list <- list(
+  SHAMWM_vs_Sham = genes_shamwm,
+  RYGB_vs_Sham   = genes_rygb
+)
+
+# Step 4: 富集分析（GO Biological Process）
+ck <- compareCluster(
+  geneCluster = gene_list,
+  fun         = "enrichGO",
+  OrgDb       = org.Rn.eg.db,
+  ont         = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.1
+)
+
+# Step 5: 设置可读性（使用 SYMBOL 名）
+ck <- setReadable(ck, OrgDb = org.Rn.eg.db, keyType = "ENTREZID")
+
+# Step 6: 绘制 dotplot 并设置 Y 轴 label 间距（lineheight）更大
+dotplot_out <- dotplot(
+  ck,
+  showCategory = 25,  # 可调节要展示的 GO 条目数
+  title = "GO BP Comparison: SHAMWM vs RYGB in DistJej"
+) +
+  theme(
+    axis.text.y = element_text(size = 10, lineheight = 1.6),  # 关键：拉大 y 轴行距
+    plot.title = element_text(hjust = 0.5)                    # 居中标题
+  ) +
+  scale_y_discrete(expand = expansion(mult = c(0.05, 0.1)))    # 上下留白更自然
+
+# Step 7: 保存图片（更高图像防止标签重叠）
+ggsave("compare_dotplot_distjej_spaced.png", plot = dotplot_out, width = 10, height = 14, dpi = 300)
+
+
+```
